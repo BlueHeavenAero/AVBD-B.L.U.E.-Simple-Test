@@ -172,189 +172,256 @@ static void ComputeIncidentEdge(ClipVertex c[2], const float2& h, const float2& 
 	c[1].v = pos + Rot * c[1].v;
 }
 
-// The normal points from A to B
+// Circle-circle collision detection
+static int collideCircleCircle(Rigid* circleA, Rigid* circleB, Manifold::Contact* contacts)
+{
+    float2 posA = circleA->position.xy();
+    float2 posB = circleB->position.xy();
+    float radiusA = circleA->size.x;
+    float radiusB = circleB->size.x;
+    
+    float2 delta = posB - posA;
+    float distance = length(delta);
+    float totalRadius = radiusA + radiusB;
+    
+    // No collision if circles are too far apart
+    if (distance >= totalRadius)
+        return 0;
+    
+    // Handle special case where circles are exactly on top of each other
+    if (distance < 1e-6f)
+    {
+        // Use arbitrary separation direction, following box collision pattern
+        contacts[0].normal = float2{ -1.0f, 0.0f }; // Negated normal like box collision
+        contacts[0].rA = float2{ radiusA, 0.0f };
+        contacts[0].rB = float2{ radiusB, 0.0f };
+        contacts[0].feature.value = 0;
+        return 1;
+    }
+    
+    // Calculate separation normal (from A toward B)
+    float2 separationDir = delta / distance;
+    
+    // Contact point is midway between circle surfaces
+    float penetration = totalRadius - distance;
+    float2 contactPoint = posA + separationDir * radiusA - separationDir * (penetration * 0.5f);
+    
+    // CRITICAL: Following box collision pattern - negate the normal!
+    // This makes the constraint push objects apart instead of together
+    contacts[0].normal = -separationDir;
+    
+    // rA and rB are vectors from body centers to contact point (in local coords)
+    // For circles without rotation, local coords = world coords
+    contacts[0].rA = contactPoint - posA;
+    contacts[0].rB = contactPoint - posB;
+    contacts[0].feature.value = 0;
+    
+    return 1;
+}
+
+// Box-box collision detection (existing function)
+static int collideBoxBox(Rigid* bodyA, Rigid* bodyB, Manifold::Contact* contacts)
+{
+    // This will contain the existing box collision code
+    float2 normal;
+
+    // Setup
+    float2 hA = bodyA->size * 0.5f;
+    float2 hB = bodyB->size * 0.5f;
+
+    float2 posA = bodyA->position.xy();
+    float2 posB = bodyB->position.xy();
+
+    float2x2 RotA = rotation(bodyA->position.z), RotB = rotation(bodyB->position.z);
+
+    float2x2 RotAT = transpose(RotA);
+    float2x2 RotBT = transpose(RotB);
+
+    float2 dp = posB - posA;
+    float2 dA = RotAT * dp;
+    float2 dB = RotBT * dp;
+
+    float2x2 C = RotAT * RotB;
+    float2x2 absC = abs(C);
+    float2x2 absCT = transpose(absC);
+
+    // Box A faces
+    float2 faceA = abs(dA) - hA - absC * hB;
+    if (faceA.x > 0.0f || faceA.y > 0.0f)
+        return 0;
+
+    // Box B faces
+    float2 faceB = abs(dB) - absCT * hA - hB;
+    if (faceB.x > 0.0f || faceB.y > 0.0f)
+        return 0;
+
+    // Find best axis
+    Axis axis;
+    float separation;
+
+    // Box A faces
+    axis = FACE_A_X;
+    separation = faceA.x;
+    if (dA.x > 0.0f) normal = RotA.col(0);
+    else normal = -RotA.col(0);
+
+    const float relativeTol = 0.95f;
+    const float absoluteTol = 0.01f;
+
+    if (faceA.y > relativeTol * separation + absoluteTol * hA.y)
+    {
+        axis = FACE_A_Y;
+        separation = faceA.y;
+        if (dA.y > 0.0f) normal = RotA.col(1);
+        else normal = -RotA.col(1);
+    }
+
+    // Box B faces
+    if (faceB.x > relativeTol * separation + absoluteTol * hB.x)
+    {
+        axis = FACE_B_X;
+        separation = faceB.x;
+        if (dB.x > 0.0f) normal = RotB.col(0);
+        else normal = -RotB.col(0);
+    }
+
+    if (faceB.y > relativeTol * separation + absoluteTol * hB.y)
+    {
+        axis = FACE_B_Y;
+        separation = faceB.y;
+        if (dB.y > 0.0f) normal = RotB.col(1);
+        else normal = -RotB.col(1);
+    }
+
+    // Setup clipping plane data based on the separating axis
+    float2 frontNormal, sideNormal;
+    ClipVertex incidentEdge[2];
+    float front, negSide, posSide;
+    char negEdge, posEdge;
+
+    // Compute the clipping lines and the line segment to be clipped.
+    switch (axis)
+    {
+    case FACE_A_X:
+    {
+        frontNormal = normal;
+        front = dot(posA, frontNormal) + hA.x;
+        sideNormal = RotA.col(1);
+        float side = dot(posA, sideNormal);
+        negSide = -side + hA.y;
+        posSide = side + hA.y;
+        negEdge = EDGE3;
+        posEdge = EDGE1;
+        ComputeIncidentEdge(incidentEdge, hB, posB, RotB, frontNormal);
+    }
+    break;
+
+    case FACE_A_Y:
+    {
+        frontNormal = normal;
+        front = dot(posA, frontNormal) + hA.y;
+        sideNormal = RotA.col(0);
+        float side = dot(posA, sideNormal);
+        negSide = -side + hA.x;
+        posSide = side + hA.x;
+        negEdge = EDGE2;
+        posEdge = EDGE4;
+        ComputeIncidentEdge(incidentEdge, hB, posB, RotB, frontNormal);
+    }
+    break;
+
+    case FACE_B_X:
+    {
+        frontNormal = -normal;
+        front = dot(posB, frontNormal) + hB.x;
+        sideNormal = RotB.col(1);
+        float side = dot(posB, sideNormal);
+        negSide = -side + hB.y;
+        posSide = side + hB.y;
+        negEdge = EDGE3;
+        posEdge = EDGE1;
+        ComputeIncidentEdge(incidentEdge, hA, posA, RotA, frontNormal);
+    }
+    break;
+
+    case FACE_B_Y:
+    {
+        frontNormal = -normal;
+        front = dot(posB, frontNormal) + hB.y;
+        sideNormal = RotB.col(0);
+        float side = dot(posB, sideNormal);
+        negSide = -side + hB.x;
+        posSide = side + hB.x;
+        negEdge = EDGE2;
+        posEdge = EDGE4;
+        ComputeIncidentEdge(incidentEdge, hA, posA, RotA, frontNormal);
+    }
+    break;
+    }
+
+    // clip other face with 5 box planes (1 face plane, 4 edge planes)
+
+    ClipVertex clipPoints1[2];
+    ClipVertex clipPoints2[2];
+    int np;
+
+    // Clip to box side 1
+    np = ClipSegmentToLine(clipPoints1, incidentEdge, -sideNormal, negSide, negEdge);
+
+    if (np < 2)
+        return 0;
+
+    // Clip to negative box side 1
+    np = ClipSegmentToLine(clipPoints2, clipPoints1, sideNormal, posSide, posEdge);
+
+    if (np < 2)
+        return 0;
+
+    // Now clipPoints2 contains the clipping points.
+    // Due to roundoff, it is possible that clipping removes all points.
+
+    int numContacts = 0;
+    for (int i = 0; i < 2; ++i)
+    {
+        float separation = dot(frontNormal, clipPoints2[i].v) - front;
+
+        if (separation <= 0)
+        {
+            contacts[numContacts].normal = -normal;
+
+            // slide contact point onto reference face (easy to cull)
+            contacts[numContacts].rA = transpose(RotA) * (clipPoints2[i].v - frontNormal * separation - posA);
+            contacts[numContacts].rB = transpose(RotB) * (clipPoints2[i].v - posB);
+            contacts[numContacts].feature = clipPoints2[i].fp;
+
+            if (axis == FACE_B_X || axis == FACE_B_Y)
+            {
+                Flip(contacts[numContacts].feature);
+                contacts[numContacts].rA = transpose(RotA) * (clipPoints2[i].v - posA);
+                contacts[numContacts].rB = transpose(RotB) * (clipPoints2[i].v - frontNormal * separation - posB);
+            }
+            ++numContacts;
+        }
+    }
+
+    return numContacts;
+}
+
+// Main collision dispatcher
 int Manifold::collide(Rigid* bodyA, Rigid* bodyB, Contact* contacts)
 {
-	float2 normal;
-
-	// Setup
-	float2 hA = bodyA->size * 0.5f;
-	float2 hB = bodyB->size * 0.5f;
-
-	float2 posA = bodyA->position.xy();
-	float2 posB = bodyB->position.xy();
-
-	float2x2 RotA = rotation(bodyA->position.z), RotB = rotation(bodyB->position.z);
-
-	float2x2 RotAT = transpose(RotA);
-	float2x2 RotBT = transpose(RotB);
-
-	float2 dp = posB - posA;
-	float2 dA = RotAT * dp;
-	float2 dB = RotBT * dp;
-
-	float2x2 C = RotAT * RotB;
-	float2x2 absC = abs(C);
-	float2x2 absCT = transpose(absC);
-
-	// Box A faces
-	float2 faceA = abs(dA) - hA - absC * hB;
-	if (faceA.x > 0.0f || faceA.y > 0.0f)
-		return 0;
-
-	// Box B faces
-	float2 faceB = abs(dB) - absCT * hA - hB;
-	if (faceB.x > 0.0f || faceB.y > 0.0f)
-		return 0;
-
-	// Find best axis
-	Axis axis;
-	float separation;
-
-	// Box A faces
-	axis = FACE_A_X;
-	separation = faceA.x;
-	if (dA.x > 0.0f) normal = RotA.col(0);
-	else normal = -RotA.col(0);
-
-	const float relativeTol = 0.95f;
-	const float absoluteTol = 0.01f;
-
-	if (faceA.y > relativeTol * separation + absoluteTol * hA.y)
-	{
-		axis = FACE_A_Y;
-		separation = faceA.y;
-		if (dA.y > 0.0f) normal = RotA.col(1);
-		else normal = -RotA.col(1);
-	}
-
-	// Box B faces
-	if (faceB.x > relativeTol * separation + absoluteTol * hB.x)
-	{
-		axis = FACE_B_X;
-		separation = faceB.x;
-		if (dB.x > 0.0f) normal = RotB.col(0);
-		else normal = -RotB.col(0);
-	}
-
-	if (faceB.y > relativeTol * separation + absoluteTol * hB.y)
-	{
-		axis = FACE_B_Y;
-		separation = faceB.y;
-		if (dB.y > 0.0f) normal = RotB.col(1);
-		else normal = -RotB.col(1);
-	}
-
-	// Setup clipping plane data based on the separating axis
-	float2 frontNormal, sideNormal;
-	ClipVertex incidentEdge[2];
-	float front, negSide, posSide;
-	char negEdge, posEdge;
-
-	// Compute the clipping lines and the line segment to be clipped.
-	switch (axis)
-	{
-	case FACE_A_X:
-	{
-		frontNormal = normal;
-		front = dot(posA, frontNormal) + hA.x;
-		sideNormal = RotA.col(1);
-		float side = dot(posA, sideNormal);
-		negSide = -side + hA.y;
-		posSide = side + hA.y;
-		negEdge = EDGE3;
-		posEdge = EDGE1;
-		ComputeIncidentEdge(incidentEdge, hB, posB, RotB, frontNormal);
-	}
-	break;
-
-	case FACE_A_Y:
-	{
-		frontNormal = normal;
-		front = dot(posA, frontNormal) + hA.y;
-		sideNormal = RotA.col(0);
-		float side = dot(posA, sideNormal);
-		negSide = -side + hA.x;
-		posSide = side + hA.x;
-		negEdge = EDGE2;
-		posEdge = EDGE4;
-		ComputeIncidentEdge(incidentEdge, hB, posB, RotB, frontNormal);
-	}
-	break;
-
-	case FACE_B_X:
-	{
-		frontNormal = -normal;
-		front = dot(posB, frontNormal) + hB.x;
-		sideNormal = RotB.col(1);
-		float side = dot(posB, sideNormal);
-		negSide = -side + hB.y;
-		posSide = side + hB.y;
-		negEdge = EDGE3;
-		posEdge = EDGE1;
-		ComputeIncidentEdge(incidentEdge, hA, posA, RotA, frontNormal);
-	}
-	break;
-
-	case FACE_B_Y:
-	{
-		frontNormal = -normal;
-		front = dot(posB, frontNormal) + hB.y;
-		sideNormal = RotB.col(0);
-		float side = dot(posB, sideNormal);
-		negSide = -side + hB.x;
-		posSide = side + hB.x;
-		negEdge = EDGE2;
-		posEdge = EDGE4;
-		ComputeIncidentEdge(incidentEdge, hA, posA, RotA, frontNormal);
-	}
-	break;
-	}
-
-	// clip other face with 5 box planes (1 face plane, 4 edge planes)
-
-	ClipVertex clipPoints1[2];
-	ClipVertex clipPoints2[2];
-	int np;
-
-	// Clip to box side 1
-	np = ClipSegmentToLine(clipPoints1, incidentEdge, -sideNormal, negSide, negEdge);
-
-	if (np < 2)
-		return 0;
-
-	// Clip to negative box side 1
-	np = ClipSegmentToLine(clipPoints2, clipPoints1, sideNormal, posSide, posEdge);
-
-	if (np < 2)
-		return 0;
-
-	// Now clipPoints2 contains the clipping points.
-	// Due to roundoff, it is possible that clipping removes all points.
-
-	int numContacts = 0;
-	for (int i = 0; i < 2; ++i)
-	{
-		float separation = dot(frontNormal, clipPoints2[i].v) - front;
-
-		if (separation <= 0)
-		{
-			contacts[numContacts].normal = -normal;
-
-			// slide contact point onto reference face (easy to cull)
-			contacts[numContacts].rA = transpose(RotA) * (clipPoints2[i].v - frontNormal * separation - posA);
-			contacts[numContacts].rB = transpose(RotB) * (clipPoints2[i].v - posB);
-			contacts[numContacts].feature = clipPoints2[i].fp;
-
-			if (axis == FACE_B_X || axis == FACE_B_Y)
-			{
-				Flip(contacts[numContacts].feature);
-				contacts[numContacts].rA = transpose(RotA) * (clipPoints2[i].v - posA);
-				contacts[numContacts].rB = transpose(RotB) * (clipPoints2[i].v - frontNormal * separation - posB);
-			}
-			++numContacts;
-		}
-	}
-
-	return numContacts;
+    // Dispatch to appropriate collision detection function based on shape types
+    if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_CIRCLE)
+    {
+        return collideCircleCircle(bodyA, bodyB, contacts);
+    }
+    else if (bodyA->shapeType == SHAPE_BOX && bodyB->shapeType == SHAPE_BOX)
+    {
+        return collideBoxBox(bodyA, bodyB, contacts);
+    }
+    else
+    {
+        // Mixed shape collisions not implemented yet
+        return 0;
+    }
 }

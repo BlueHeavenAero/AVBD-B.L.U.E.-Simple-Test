@@ -17,8 +17,8 @@
 #include <windows.h>
 #endif
 
-#ifdef TARGET_OS_MAC
-#include <OpenGL/GL.h>
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
 #else
 #include <GL/gl.h>
 #endif
@@ -31,6 +31,12 @@
 #define COLLISION_MARGIN 0.0005f      // Margin for collision detection to avoid flickering contacts
 #define STICK_THRESH 0.01f            // Position threshold for sticking contacts (ie static friction)
 #define SHOW_CONTACTS true            // Whether to show contacts in the debug draw
+
+enum ShapeType
+{
+    SHAPE_BOX,
+    SHAPE_CIRCLE
+};
 
 struct Rigid;
 struct Force;
@@ -48,13 +54,19 @@ struct Rigid
     float3 inertial;
     float3 velocity;
     float3 prevVelocity;
-    float2 size;
+    float2 size;  // For boxes: width, height. For circles: radius stored in x component
     float mass;
     float moment;
     float friction;
-    float radius;
+    float radius;  // Bounding radius for broadphase
+    ShapeType shapeType;
 
+    // Constructor for boxes
     Rigid(Solver* solver, float2 size, float density, float friction, float3 position, float3 velocity = float3{ 0, 0, 0 });
+    
+    // Constructor for circles
+    Rigid(Solver* solver, float circleRadius, float density, float friction, float3 position, float3 velocity = float3{ 0, 0, 0 });
+    
     ~Rigid();
 
     bool constrainedTo(Rigid* other) const;
@@ -201,6 +213,13 @@ struct Solver
 
     bool postStabilize; // Whether to apply post-stabilization to the system
 
+    // Screen boundary collision settings
+    float boundaryLeft;
+    float boundaryRight;
+    float boundaryTop;
+    float boundaryBottom;
+    float boundaryRestitution; // Bounce factor (0 = no bounce, 1 = perfect bounce)
+
     Rigid* bodies;
     Force* forces;
 
@@ -212,4 +231,6 @@ struct Solver
     void defaultParams();
     void step();
     void draw();
+    void handleBoundaryCollisions(); // Handle collisions with screen boundaries
+    void updateBoundaries(float left, float right, float bottom, float top); // Update boundaries based on camera
 };

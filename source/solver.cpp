@@ -10,6 +10,7 @@
 */
 
 #include "solver.h"
+#include <cstdio>
 
 Solver::Solver()
     : bodies(0), forces(0)
@@ -70,6 +71,14 @@ void Solver::defaultParams()
     // Post stabilization applies an extra iteration to fix positional error.
     // This removes the need for the alpha parameter, which can make tuning a little easier.
     postStabilize = true;
+
+    // Set simple hard-coded boundaries for testing
+    // These work well with the default camera position (0, 5) and zoom 25
+    boundaryLeft = -20.0f;
+    boundaryRight = 20.0f;
+    boundaryBottom = -5.0f;
+    boundaryTop = 25.0f;
+    boundaryRestitution = 0.8f; // 80% bounce
 }
 
 void Solver::step()
@@ -238,6 +247,77 @@ void Solver::step()
             }
         }
     }
+    
+    // Handle boundary collisions AFTER physics solving to prevent objects from escaping screen
+    handleBoundaryCollisions();
+}
+
+void Solver::handleBoundaryCollisions()
+{
+    for (Rigid* body = bodies; body != 0; body = body->next)
+    {
+        if (body->mass <= 0) continue; // Skip static bodies
+        
+        float2 pos = body->position.xy();
+        float2 vel = body->velocity.xy();
+        bool collided = false;
+        
+        // For circles, use the radius; for boxes, use half the size
+        float bodyRadius = (body->shapeType == SHAPE_CIRCLE) ? body->size.x : length(body->size * 0.5f);
+        
+
+        
+        // Left boundary - only act if penetrating AND moving toward boundary
+        float leftPenetration = boundaryLeft + bodyRadius - pos.x;
+        if (leftPenetration > 0.01f && vel.x < -0.01f)
+        {
+            body->position.x = boundaryLeft + bodyRadius;
+            body->velocity.x = -vel.x * boundaryRestitution;
+            collided = true;
+        }
+        
+        // Right boundary - only act if penetrating AND moving toward boundary
+        float rightPenetration = pos.x + bodyRadius - boundaryRight;
+        if (rightPenetration > 0.01f && vel.x > 0.01f)
+        {
+            body->position.x = boundaryRight - bodyRadius;
+            body->velocity.x = -vel.x * boundaryRestitution;
+            collided = true;
+        }
+        
+        // Bottom boundary - only act if penetrating AND moving toward boundary
+        float penetration = boundaryBottom + bodyRadius - pos.y;
+        if (penetration > 0.01f && vel.y < -0.01f) // Only if moving downward with significant velocity
+        {
+            body->position.y = boundaryBottom + bodyRadius;
+            body->velocity.y = -vel.y * boundaryRestitution;
+            collided = true;
+        }
+        
+        // Top boundary - only act if penetrating AND moving toward boundary
+        float topPenetration = pos.y + bodyRadius - boundaryTop;
+        if (topPenetration > 0.01f && vel.y > 0.01f)
+        {
+            body->position.y = boundaryTop - bodyRadius;
+            body->velocity.y = -vel.y * boundaryRestitution;
+            collided = true;
+        }
+        
+        // Light friction on collision to make it more realistic
+        if (collided)
+        {
+            body->velocity.x *= 0.98f; // Very light friction
+            body->velocity.z *= 0.95f; // Light rotation damping
+        }
+    }
+}
+
+void Solver::updateBoundaries(float left, float right, float bottom, float top)
+{
+    boundaryLeft = left;
+    boundaryRight = right;
+    boundaryBottom = bottom;
+    boundaryTop = top;
 }
 
 void Solver::draw()

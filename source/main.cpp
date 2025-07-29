@@ -20,8 +20,8 @@
 #include <windows.h>
 #endif
 
-#ifdef TARGET_OS_MAC
-#include <OpenGL/GL.h>
+#ifdef __APPLE__
+#include <OpenGL/gl.h>
 #else
 #include <GL/gl.h>
 #endif
@@ -57,6 +57,11 @@ float2 boxSize = { 1, 1 };
 float2 boxVelocity = { 0, 0 };
 float boxFriction = 0.5f;
 float boxDensity = 1.0f;
+float circleRadius = 0.5f;
+float2 circleVelocity = { 0, 0 };
+float circleFriction = 0.5f;
+float circleDensity = 1.0f;
+bool createCircles = false;
 bool paused = false;
 
 bool touchOnly = false;
@@ -119,9 +124,26 @@ void ui()
     }
 
     ImGui::Spacing();
-    ImGui::SliderFloat("Box Friction", &boxFriction, 0.0f, 2.0f);
-    ImGui::SliderFloat2("Box Size", &boxSize.x, 0.1f, 10.0f);
-    ImGui::SliderFloat2("Box Velocity", &boxVelocity.x, -20.0f, 20.0f);
+    
+    // Shape creation controls
+    ImGui::Checkbox("Create Circles", &createCircles);
+    
+    if (createCircles)
+    {
+        ImGui::Text("Circle Creation:");
+        ImGui::SliderFloat("Circle Radius", &circleRadius, 0.1f, 5.0f);
+        ImGui::SliderFloat("Circle Friction", &circleFriction, 0.0f, 2.0f);
+        ImGui::SliderFloat("Circle Density", &circleDensity, 0.1f, 10.0f);
+        ImGui::SliderFloat2("Circle Velocity", &circleVelocity.x, -20.0f, 20.0f);
+    }
+    else
+    {
+        ImGui::Text("Box Creation:");
+        ImGui::SliderFloat("Box Friction", &boxFriction, 0.0f, 2.0f);
+        ImGui::SliderFloat2("Box Size", &boxSize.x, 0.1f, 10.0f);
+        ImGui::SliderFloat("Box Density", &boxDensity, 0.1f, 10.0f);
+        ImGui::SliderFloat2("Box Velocity", &boxVelocity.x, -20.0f, 20.0f);
+    }
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -187,12 +209,20 @@ void input()
         drag = 0;
     }
 
-    // Create box
+    // Create shape (box or circle)
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
         (touchOnly && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)))
     {
-        new Rigid(solver, boxSize, boxDensity, boxFriction, float3{ mousePos.x, mousePos.y, 0.0f },
-            float3{ boxVelocity.x, boxVelocity.y, 0.0f });
+        if (createCircles)
+        {
+            new Rigid(solver, circleRadius, circleDensity, circleFriction, float3{ mousePos.x, mousePos.y, 0.0f },
+                float3{ circleVelocity.x, circleVelocity.y, 0.0f });
+        }
+        else
+        {
+            new Rigid(solver, boxSize, boxDensity, boxFriction, float3{ mousePos.x, mousePos.y, 0.0f },
+                float3{ boxVelocity.x, boxVelocity.y, 0.0f });
+        }
     }
 }
 
@@ -297,6 +327,9 @@ void mainLoop()
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Note: Using hard-coded boundaries for now
+    // Dynamic camera-aware boundaries will be implemented in iOS version
 
     // ImGUI setup
     ImGui_ImplOpenGL3_NewFrame();

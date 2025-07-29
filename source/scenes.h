@@ -45,10 +45,12 @@ static void scenePyramid(Solver* solver)
 {
     const int SIZE = 20;
     solver->clear();
+    // Ground (still a box)
     new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, -2.0f, 0.0f });
+    // Pyramid made of circles
     for (int y = 0; y < SIZE; y++)
         for (int x = 0; x < SIZE - y; x++)
-            new Rigid(solver, { 1, 0.5f }, 1.0f, 0.5f, { x * 1.1f + y * 0.5f - SIZE / 2.0f, y * 0.85f, 0.0f });
+            new Rigid(solver, 0.4f, 1.0f, 0.5f, { x * 0.9f + y * 0.45f - SIZE / 2.0f, y * 0.8f + 0.4f, 0.0f });
 }
 
 static void sceneRope(Solver* solver)
