@@ -79,7 +79,21 @@ bool Manifold::initialize()
         contacts[i].JAt = { basis[1][0], basis[1][1], cross(rAW, tangent) };
         contacts[i].JBt = { -basis[1][0], -basis[1][1], -cross(rBW, tangent) };
 
-        contacts[i].C0 = basis * (bodyA->position.xy() + rAW - bodyB->position.xy() - rBW) + float2{ COLLISION_MARGIN, 0 };
+        // CRITICAL FIX: For circle-circle contacts, directly compute the signed distance constraint
+        if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_CIRCLE) {
+            // For circles, the constraint should be: distance_between_centers - (radiusA + radiusB)
+            // When negative: penetration. When zero: touching. When positive: separated.
+            float2 delta = bodyB->position.xy() - bodyA->position.xy();
+            float distance = length(delta);
+            float totalRadius = bodyA->size.x + bodyB->size.x;
+            float signedDistance = distance - totalRadius;
+            
+            // The normal constraint should directly be the signed distance plus margin
+            contacts[i].C0 = float2{ signedDistance + COLLISION_MARGIN, 0 };
+        } else {
+            // For non-circle contacts, use the original formulation
+            contacts[i].C0 = basis * (bodyA->position.xy() + rAW - bodyB->position.xy() - rBW) + float2{ COLLISION_MARGIN, 0 };
+        }
     }
 
     return numContacts > 0;

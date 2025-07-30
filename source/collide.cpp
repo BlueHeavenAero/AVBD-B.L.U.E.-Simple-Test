@@ -191,10 +191,11 @@ static int collideCircleCircle(Rigid* circleA, Rigid* circleB, Manifold::Contact
     // Handle special case where circles are exactly on top of each other
     if (distance < 1e-6f)
     {
-        // Use arbitrary separation direction, following box collision pattern
+        // Use arbitrary separation direction
         contacts[0].normal = float2{ -1.0f, 0.0f }; // Negated normal like box collision
+        // For degenerate case, use center-to-center vectors scaled to surface
         contacts[0].rA = float2{ radiusA, 0.0f };
-        contacts[0].rB = float2{ radiusB, 0.0f };
+        contacts[0].rB = float2{ -radiusB, 0.0f };
         contacts[0].feature.value = 0;
         return 1;
     }
@@ -202,18 +203,30 @@ static int collideCircleCircle(Rigid* circleA, Rigid* circleB, Manifold::Contact
     // Calculate separation normal (from A toward B)
     float2 separationDir = delta / distance;
     
-    // Contact point is midway between circle surfaces
-    float penetration = totalRadius - distance;
-    float2 contactPoint = posA + separationDir * radiusA - separationDir * (penetration * 0.5f);
+    // CRITICAL FIX: For AVBD circles, use the correct constraint formulation
+    // The constraint should directly measure signed distance between surfaces
+    // For circles: constraint = distance_between_centers - (radiusA + radiusB)
+    // When negative: penetration. When zero: touching. When positive: separated.
     
-    // CRITICAL: Following box collision pattern - negate the normal!
-    // This makes the constraint push objects apart instead of together
-    contacts[0].normal = -separationDir;
+    // Set up contact points that will give us the correct constraint
+    // The key insight: we need rA and rB such that when the manifold computes:
+    // C0 = basis * (posA + rA - posB - rB) + margin
+    // It equals the signed distance constraint
     
-    // rA and rB are vectors from body centers to contact point (in local coords)
-    // For circles without rotation, local coords = world coords
-    contacts[0].rA = contactPoint - posA;
-    contacts[0].rB = contactPoint - posB;
+    // For the normal direction, we want: posA + rA - posB - rB = distance - totalRadius
+    // So: rA - rB = distance - totalRadius - (posA - posB)
+    //             = distance - totalRadius - (-delta)
+    //             = distance - totalRadius + delta
+    //             = distance - totalRadius + separationDir * distance
+    //             = separationDir * distance - totalRadius + separationDir * distance
+    //             = separationDir * distance - totalRadius + separationDir * distance
+    // This is getting complex. Let me use a simpler approach.
+    
+    // Simple approach: Set contact points on the surfaces closest to each other
+    contacts[0].normal = -separationDir;  // Constraint normal (pointing from B to A)
+    contacts[0].rA = separationDir * radiusA;    // From A center to A surface
+    contacts[0].rB = -separationDir * radiusB;   // From B center to B surface (toward A)
+    
     contacts[0].feature.value = 0;
     
     return 1;
