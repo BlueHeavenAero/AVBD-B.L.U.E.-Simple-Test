@@ -11,6 +11,9 @@
 
 #include "solver.h"
 #include <cstdio>
+#include <cstdlib>  // For rand(), srand()
+#include <ctime>    // For time()
+#include <cmath>    // For logf(), cosf(), sinf(), sqrtf()
 
 Solver::Solver()
     : bodies(0), forces(0)
@@ -77,12 +80,128 @@ void Solver::defaultParams()
     boundaryLeft = -20.0f;
     boundaryRight = 20.0f;
     boundaryBottom = -5.0f;
-    boundaryTop = 25.0f;
+    boundaryTop = 50.0f; // Increased by factor of 2 (was 25.0f)
     boundaryRestitution = 0.8f; // 80% bounce
+    
+    // Initialize circle dropping system
+    circleDropEnabled = false;
+    nextDropTime = 0.0f;
+    currentTime = 0.0f;
+    dropSystemInitialized = false;
+    circlesDropped = 0;
+    maxCirclesToDrop = 50;
+}
+
+void Solver::enableCircleDrop(bool enable)
+{
+    circleDropEnabled = enable;
+    if (enable && !dropSystemInitialized) {
+        // Initialize the dropping system
+        srand((unsigned int)time(nullptr));
+        currentTime = 0.0f;
+        nextDropTime = 0.2f; // First drop after 0.2 seconds
+        dropSystemInitialized = true;
+        circlesDropped = 0;
+    }
+}
+
+void Solver::resetCircleDrop()
+{
+    circlesDropped = 0;
+    currentTime = 0.0f;
+    nextDropTime = 0.2f;
+    dropSystemInitialized = false;
+}
+
+void Solver::updateCircleDrop()
+{
+    if (!circleDropEnabled || circlesDropped >= maxCirclesToDrop) return;
+    
+    // Update time
+    currentTime += dt;
+    
+    // Check if it's time to drop a new circle
+    if (currentTime >= nextDropTime) {
+        // Drop interval: average 5 per second = 0.2 seconds average
+        // Use exponential distribution for realistic random intervals
+        float averageInterval = 0.2f;
+        float randomInterval = -averageInterval * logf((float)rand() / RAND_MAX);
+        nextDropTime = currentTime + randomInterval;
+        
+        // Random horizontal position (normal distribution around center)
+        // Box-Muller transform for normal distribution
+        static bool hasSpare = false;
+        static float spare;
+        float randomX;
+        
+        if (hasSpare) {
+            randomX = spare;
+            hasSpare = false;
+        } else {
+            hasSpare = true;
+            float u = (float)rand() / RAND_MAX;
+            float v = (float)rand() / RAND_MAX;
+            float mag = 3.0f * sqrtf(-2.0f * logf(u)); // 3.0f is the standard deviation
+            randomX = mag * cosf(2.0f * 3.14159f * v);
+            spare = mag * sinf(2.0f * 3.14159f * v);
+        }
+        
+        // Clamp to 20% of boundary width
+        float boundaryWidth = boundaryRight - boundaryLeft;
+        float maxOffset = boundaryWidth * 0.2f; // 20% of boundary width
+        randomX = clamp(randomX, -maxOffset, maxOffset);
+        
+        // Random initial rotation
+        float randomRotation = ((float)rand() / RAND_MAX) * 2.0f * 3.14159f;
+        
+        // Drop height: from the boundary top
+        float dropHeight = boundaryTop;
+        
+        // Create the circle with random position and rotation
+        float circleRadius = 1.0f;
+        new Rigid(this, circleRadius, 1.0f, 0.5f, 
+                  { randomX, dropHeight, randomRotation });
+        
+        // Increment circle count
+        circlesDropped++;
+    }
+}
+
+void Solver::createBoundaryWalls()
+{
+    const float wallThickness = 1.0f;
+    const float wallExtension = 5.0f; // Make walls slightly larger than needed
+    
+    // Create invisible static walls as rigid bodies
+    // Left wall
+    Rigid* leftWall = new Rigid(this, { wallThickness, boundaryTop - boundaryBottom + wallExtension * 2 }, 
+                               0.0f, 0.5f, { boundaryLeft - wallThickness * 0.5f, (boundaryTop + boundaryBottom) * 0.5f, 0.0f });
+    leftWall->invisible = true;
+    
+    // Right wall  
+    Rigid* rightWall = new Rigid(this, { wallThickness, boundaryTop - boundaryBottom + wallExtension * 2 }, 
+                                0.0f, 0.5f, { boundaryRight + wallThickness * 0.5f, (boundaryTop + boundaryBottom) * 0.5f, 0.0f });
+    rightWall->invisible = true;
+    
+    // Bottom wall
+    Rigid* bottomWall = new Rigid(this, { boundaryRight - boundaryLeft + wallExtension * 2, wallThickness }, 
+                                 0.0f, 0.5f, { (boundaryRight + boundaryLeft) * 0.5f, boundaryBottom - wallThickness * 0.5f, 0.0f });
+    bottomWall->invisible = true;
+    
+    // Top wall
+    Rigid* topWall = new Rigid(this, { boundaryRight - boundaryLeft + wallExtension * 2, wallThickness }, 
+                              0.0f, 0.5f, { (boundaryRight + boundaryLeft) * 0.5f, boundaryTop + wallThickness * 0.5f, 0.0f });
+    topWall->invisible = true;
 }
 
 void Solver::step()
 {
+    // DEBUG: Count circle-circle contacts for this frame
+    // int circleContactCount = 0;
+    
+    // Update circle dropping system
+    updateCircleDrop();
+    
     // Perform broadphase collision detection
     // This is a naive O(n^2) approach, but it is sufficient for small numbers of bodies in this sample.
     for (Rigid* bodyA = bodies; bodyA != 0; bodyA = bodyA->next)
@@ -92,9 +211,18 @@ void Solver::step()
             float2 dp = bodyA->position.xy() - bodyB->position.xy();
             float r = bodyA->radius + bodyB->radius;
             if (dot(dp, dp) <= r * r && !bodyA->constrainedTo(bodyB))
+            {
+                // if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_CIRCLE) {
+                //     circleContactCount++;
+                // }
                 new Manifold(this, bodyA, bodyB);
+            }
         }
     }
+    
+    // if (circleContactCount > 2) {
+    //     printf("DEBUG: Frame with %d circle-circle contacts detected\n", circleContactCount);
+    // }
 
     // Initialize and warmstart forces
     for (Force* force = forces; force != 0;)
@@ -199,11 +327,32 @@ void Solver::step()
                     // Accumulate force (Eq. 13) and hessian (Eq. 17)
                     rhs += force->J[i] * f;
                     lhs += outer(force->J[i], force->J[i] * force->penalty[i]) + G;
+
+                    // DEBUG: Track forces on circles
+                    // if (body->shapeType == SHAPE_CIRCLE && abs(f) > 0.1f)
+                    // {
+                    //     printf("DEBUG: Circle at (%.3f, %.3f) force: %.3f, constraint: %.3f, penalty: %.3f\n", 
+                    //            body->position.x, body->position.y, f, force->C[i], force->penalty[i]);
+                    //     printf("DEBUG: Force direction: (%.3f, %.3f, %.3f)\n", force->J[i].x, force->J[i].y, force->J[i].z);
+                    //     
+                    //     // Track if this is a tangential force (odd indices are tangential)
+                    //     if (i % 2 == 1) {
+                    //         printf("DEBUG: TANGENTIAL force on circle: %.3f\n", f);
+                    //     }
+                    // }
                 }
             }
 
             // Solve the SPD linear system using LDL and apply the update (Eq. 4)
-            body->position -= solve(lhs, rhs);
+            float3 update = solve(lhs, rhs);
+            body->position -= update;
+
+            // DEBUG: Track orientation changes for circles
+            // if (body->shapeType == SHAPE_CIRCLE && abs(update.z) > 0.01f)
+            // {
+            //     printf("DEBUG: Circle orientation change: %.3f radians (%.1f degrees)\n", update.z, update.z * 180.0f / 3.14159f);
+            //     printf("DEBUG: Circle new orientation: %.3f radians (%.1f degrees)\n", body->position.z, body->position.z * 180.0f / 3.14159f);
+            // }
         }
 
         // Dual update, only for non stabilized iterations in the case of post stabilization
@@ -244,12 +393,25 @@ void Solver::step()
                 body->prevVelocity = body->velocity;
                 if (body->mass > 0)
                     body->velocity = (body->position - body->initial) / dt;
+                
+                // TEMPORARY FIX: Apply angular damping to circles to prevent energy accumulation
+                // from numerical instabilities during sustained contact
+                if (body->shapeType == SHAPE_CIRCLE) {
+                    float angularDamping = 0.50f;  // User's preferred value
+                    body->velocity.z *= angularDamping;
+                }
             }
+        }
+
+        // If using post-stabilization, apply a final pass of position-based corrections.
+        if (postStabilize && it == iterations)
+        {
+            currentAlpha = 1.0f; // No velocity interpolation
         }
     }
     
-    // Handle boundary collisions AFTER physics solving to prevent objects from escaping screen
-    handleBoundaryCollisions();
+    // DISABLED: Using static wall bodies instead of post-process boundary handling
+    // handleBoundaryCollisions();
 }
 
 void Solver::handleBoundaryCollisions()
@@ -264,8 +426,6 @@ void Solver::handleBoundaryCollisions()
         
         // For circles, use the radius; for boxes, use half the size
         float bodyRadius = (body->shapeType == SHAPE_CIRCLE) ? body->size.x : length(body->size * 0.5f);
-        
-
         
         // Left boundary - only act if penetrating AND moving toward boundary
         float leftPenetration = boundaryLeft + bodyRadius - pos.x;

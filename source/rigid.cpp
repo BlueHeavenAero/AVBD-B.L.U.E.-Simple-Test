@@ -10,10 +10,11 @@
 */
 
 #include "solver.h"
+#include <cstdio>
 
 // Constructor for boxes
 Rigid::Rigid(Solver* solver, float2 size, float density, float friction, float3 position, float3 velocity)
-    : solver(solver), forces(0), next(0), position(position), velocity(velocity), prevVelocity(velocity), size(size), friction(friction), shapeType(SHAPE_BOX)
+    : solver(solver), forces(0), next(0), position(position), velocity(velocity), prevVelocity(velocity), size(size), friction(friction), shapeType(SHAPE_BOX), invisible(false)
 {
     // Add to linked list
     next = solver->bodies;
@@ -27,7 +28,7 @@ Rigid::Rigid(Solver* solver, float2 size, float density, float friction, float3 
 
 // Constructor for circles
 Rigid::Rigid(Solver* solver, float circleRadius, float density, float friction, float3 position, float3 velocity)
-    : solver(solver), forces(0), next(0), position(position), velocity(velocity), prevVelocity(velocity), friction(friction), shapeType(SHAPE_CIRCLE)
+    : solver(solver), forces(0), next(0), position(position), velocity(velocity), prevVelocity(velocity), friction(friction), shapeType(SHAPE_CIRCLE), invisible(false)
 {
     // Add to linked list
     next = solver->bodies;
@@ -43,6 +44,11 @@ Rigid::Rigid(Solver* solver, float circleRadius, float density, float friction, 
     mass = 3.14159f * r * r * density;
     moment = 0.5f * mass * r * r;
     radius = r; // Bounding radius is just the circle radius
+
+    // DEBUG: Print circle creation info
+    // printf("DEBUG: Created circle at (%.3f, %.3f) with radius %.3f, mass %.3f, moment %.3f\n", 
+    //        position.x, position.y, r, mass, moment);
+    // printf("DEBUG: Circle initial velocity: (%.3f, %.3f, %.3f)\n", velocity.x, velocity.y, velocity.z);
 }
 
 Rigid::~Rigid()
@@ -65,6 +71,8 @@ bool Rigid::constrainedTo(Rigid* other) const
 
 void Rigid::draw()
 {
+    if (invisible) return; // Skip drawing invisible boundary walls
+    
     if (shapeType == SHAPE_BOX)
     {
         // Draw box

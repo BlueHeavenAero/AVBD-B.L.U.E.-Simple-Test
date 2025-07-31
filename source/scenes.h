@@ -13,6 +13,9 @@
 
 #include "maths.h"
 #include "solver.h"
+#include <cstdlib>  // For rand(), srand()
+#include <ctime>    // For time()
+#include <cmath>    // For logf(), cosf(), sinf(), sqrtf()
 
 static void sceneEmpty(Solver* solver)
 {
@@ -43,14 +46,17 @@ static void sceneStaticFriction(Solver* solver)
 
 static void scenePyramid(Solver* solver)
 {
-    const int SIZE = 20;
     solver->clear();
+    
+    // Create invisible boundary walls
+    solver->createBoundaryWalls();
+    
     // Ground (still a box)
     new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, -2.0f, 0.0f });
-    // Pyramid made of circles
-    for (int y = 0; y < SIZE; y++)
-        for (int x = 0; x < SIZE - y; x++)
-            new Rigid(solver, 0.4f, 1.0f, 0.5f, { x * 0.9f + y * 0.45f - SIZE / 2.0f, y * 0.8f + 0.4f, 0.0f });
+    
+    // Reset and enable circle dropping system
+    solver->resetCircleDrop();
+    solver->enableCircleDrop(true);
 }
 
 static void sceneRope(Solver* solver)

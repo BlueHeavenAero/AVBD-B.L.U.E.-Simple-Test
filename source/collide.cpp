@@ -26,6 +26,15 @@ SOFTWARE.
 */
 
 #include "solver.h"
+#include <cstdio>
+
+// Helper function for normalizing vectors
+static float2 normalize(float2 v)
+{
+    float len = length(v);
+    if (len < 1e-6f) return float2{1.0f, 0.0f}; // Default direction
+    return v / len;
+}
 
 // Box vertex and edge numbering:
 //
@@ -184,16 +193,18 @@ static int collideCircleCircle(Rigid* circleA, Rigid* circleB, Manifold::Contact
     float distance = length(delta);
     float totalRadius = radiusA + radiusB;
     
-    // No collision if circles are too far apart
-    if (distance >= totalRadius)
+    // Calculate separation similar to box-box collision
+    float separation = distance - totalRadius;
+    
+    // No collision if circles are separated (positive separation)
+    if (separation > 0.0f)
         return 0;
     
     // Handle special case where circles are exactly on top of each other
     if (distance < 1e-6f)
     {
         // Use arbitrary separation direction
-        contacts[0].normal = float2{ -1.0f, 0.0f }; // Negated normal like box collision
-        // For degenerate case, use center-to-center vectors scaled to surface
+        contacts[0].normal = float2{ -1.0f, 0.0f };
         contacts[0].rA = float2{ radiusA, 0.0f };
         contacts[0].rB = float2{ -radiusB, 0.0f };
         contacts[0].feature.value = 0;
@@ -203,29 +214,24 @@ static int collideCircleCircle(Rigid* circleA, Rigid* circleB, Manifold::Contact
     // Calculate separation normal (from A toward B)
     float2 separationDir = delta / distance;
     
-    // CRITICAL FIX: For AVBD circles, use the correct constraint formulation
-    // The constraint should directly measure signed distance between surfaces
-    // For circles: constraint = distance_between_centers - (radiusA + radiusB)
-    // When negative: penetration. When zero: touching. When positive: separated.
+    // The contact normal points from B toward A (similar to box collision)
+    contacts[0].normal = -separationDir;
     
-    // Set up contact points that will give us the correct constraint
-    // The key insight: we need rA and rB such that when the manifold computes:
-    // C0 = basis * (posA + rA - posB - rB) + margin
-    // It equals the signed distance constraint
+    // Calculate contact points on the surfaces where circles are actually touching
+    // This is crucial - we want the contact point to be where the circles SHOULD touch,
+    // not where they currently are if they're penetrating
+    float2 contactPoint;
+    if (separation < 0.0f) {
+        // Circles are penetrating - place contact at the midpoint of overlap
+        contactPoint = posA + separationDir * radiusA;
+    } else {
+        // Circles are just touching - contact point is at the surface
+        contactPoint = posA + separationDir * radiusA;
+    }
     
-    // For the normal direction, we want: posA + rA - posB - rB = distance - totalRadius
-    // So: rA - rB = distance - totalRadius - (posA - posB)
-    //             = distance - totalRadius - (-delta)
-    //             = distance - totalRadius + delta
-    //             = distance - totalRadius + separationDir * distance
-    //             = separationDir * distance - totalRadius + separationDir * distance
-    //             = separationDir * distance - totalRadius + separationDir * distance
-    // This is getting complex. Let me use a simpler approach.
-    
-    // Simple approach: Set contact points on the surfaces closest to each other
-    contacts[0].normal = -separationDir;  // Constraint normal (pointing from B to A)
-    contacts[0].rA = separationDir * radiusA;    // From A center to A surface
-    contacts[0].rB = -separationDir * radiusB;   // From B center to B surface (toward A)
+    // Convert to relative vectors from centers (similar to box collision)
+    contacts[0].rA = contactPoint - posA;
+    contacts[0].rB = contactPoint - posB;
     
     contacts[0].feature.value = 0;
     
@@ -420,6 +426,72 @@ static int collideBoxBox(Rigid* bodyA, Rigid* bodyB, Manifold::Contact* contacts
     return numContacts;
 }
 
+// Circle-box collision detection
+static int collideCircleBox(Rigid* circle, Rigid* box, Manifold::Contact* contacts)
+{
+    float2 circlePos = circle->position.xy();
+    float circleRadius = circle->size.x;
+    
+    float2 boxPos = box->position.xy();
+    float2 boxSize = box->size;
+    
+    // Transform circle center to box local space
+    float2x2 boxRot = rotation(box->position.z);
+    float2x2 boxRotT = transpose(boxRot);
+    float2 localCirclePos = boxRotT * (circlePos - boxPos);
+    
+    // Find closest point on box to circle center
+    float2 halfSize = boxSize * 0.5f;
+    float2 closestPoint = float2{
+        clamp(localCirclePos.x, -halfSize.x, halfSize.x),
+        clamp(localCirclePos.y, -halfSize.y, halfSize.y)
+    };
+    
+    // Calculate distance from circle center to closest point
+    float2 delta = localCirclePos - closestPoint;
+    float distance = length(delta);
+    
+    // Check if collision occurs
+    if (distance >= circleRadius)
+        return 0; // No collision
+    
+    // Handle case where circle center is inside box
+    if (distance < 1e-6f)
+    {
+        // Circle center is inside box - find closest face
+        float2 distToFaces = halfSize - abs(localCirclePos);
+        if (distToFaces.x < distToFaces.y)
+        {
+            // Closest to left/right face
+            contacts[0].normal = boxRot * float2{ localCirclePos.x > 0 ? 1.0f : -1.0f, 0.0f };
+            closestPoint.x = localCirclePos.x > 0 ? halfSize.x : -halfSize.x;
+        }
+        else
+        {
+            // Closest to top/bottom face
+            contacts[0].normal = boxRot * float2{ 0.0f, localCirclePos.y > 0 ? 1.0f : -1.0f };
+            closestPoint.y = localCirclePos.y > 0 ? halfSize.y : -halfSize.y;
+        }
+    }
+    else
+    {
+        // Normal collision - normal points from box to circle
+        float2 localNormal = delta / distance;
+        contacts[0].normal = boxRot * localNormal;
+    }
+    
+    // Calculate contact point (on circle surface closest to box)
+    float2 worldClosestPoint = boxPos + boxRot * closestPoint;
+    float2 contactPoint = circlePos - normalize(contacts[0].normal) * circleRadius;
+    
+    // Calculate relative contact points
+    contacts[0].rA = contactPoint - circlePos;  // Circle relative
+    contacts[0].rB = contactPoint - boxPos;     // Box relative
+    contacts[0].feature.value = 0;
+    
+    return 1;
+}
+
 // Main collision dispatcher
 int Manifold::collide(Rigid* bodyA, Rigid* bodyB, Contact* contacts)
 {
@@ -432,9 +504,25 @@ int Manifold::collide(Rigid* bodyA, Rigid* bodyB, Contact* contacts)
     {
         return collideBoxBox(bodyA, bodyB, contacts);
     }
+    else if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_BOX)
+    {
+        return collideCircleBox(bodyA, bodyB, contacts);
+    }
+    else if (bodyA->shapeType == SHAPE_BOX && bodyB->shapeType == SHAPE_CIRCLE)
+    {
+        // Swap order and negate normal
+        int result = collideCircleBox(bodyB, bodyA, contacts);
+        if (result > 0) {
+            contacts[0].normal = -contacts[0].normal;
+            // Swap rA and rB
+            float2 temp = contacts[0].rA;
+            contacts[0].rA = contacts[0].rB;
+            contacts[0].rB = temp;
+        }
+        return result;
+    }
     else
     {
-        // Mixed shape collisions not implemented yet
-        return 0;
+        return 0; // Other mixed shape collisions not implemented
     }
 }

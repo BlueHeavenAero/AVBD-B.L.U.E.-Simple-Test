@@ -71,6 +71,15 @@ bool Manifold::initialize()
 
         float2 rAW = rotate(bodyA->position.z, contacts[i].rA);
         float2 rBW = rotate(bodyB->position.z, contacts[i].rB);
+        
+        // FIX: For circles, contact points should be orientation-independent
+        // since circles are rotationally symmetric
+        if (bodyA->shapeType == SHAPE_CIRCLE) {
+            rAW = contacts[i].rA;  // Don't apply rotation for circles
+        }
+        if (bodyB->shapeType == SHAPE_CIRCLE) {
+            rBW = contacts[i].rB;  // Don't apply rotation for circles
+        }
 
         // Precompute the constraint and derivatives at C(x-), since we use a truncated Taylor series for contacts (Sec 4).
         // Note that we discard the second order term, since it is insignificant for contacts
@@ -81,15 +90,19 @@ bool Manifold::initialize()
 
         // CRITICAL FIX: For circle-circle contacts, directly compute the signed distance constraint
         if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_CIRCLE) {
+            // TEMPORARILY DISABLED - use normal constraint formulation for debugging
             // For circles, the constraint should be: distance_between_centers - (radiusA + radiusB)
             // When negative: penetration. When zero: touching. When positive: separated.
-            float2 delta = bodyB->position.xy() - bodyA->position.xy();
-            float distance = length(delta);
-            float totalRadius = bodyA->size.x + bodyB->size.x;
-            float signedDistance = distance - totalRadius;
+            // float2 delta = bodyB->position.xy() - bodyA->position.xy();
+            // float distance = length(delta);
+            // float totalRadius = bodyA->size.x + bodyB->size.x;
+            // float signedDistance = distance - totalRadius;
             
             // The normal constraint should directly be the signed distance plus margin
-            contacts[i].C0 = float2{ signedDistance + COLLISION_MARGIN, 0 };
+            // contacts[i].C0 = float2{ signedDistance + COLLISION_MARGIN, 0 };
+            
+            // Use normal formulation for now
+            contacts[i].C0 = basis * (bodyA->position.xy() + rAW - bodyB->position.xy() - rBW) + float2{ COLLISION_MARGIN, 0 };
         } else {
             // For non-circle contacts, use the original formulation
             contacts[i].C0 = basis * (bodyA->position.xy() + rAW - bodyB->position.xy() - rBW) + float2{ COLLISION_MARGIN, 0 };
@@ -108,7 +121,14 @@ void Manifold::computeConstraint(float alpha)
         float3 dpB = bodyB->position - bodyB->initial;
         
         C[i * 2 + 0] = contacts[i].C0.x * (1 - alpha) + dot(contacts[i].JAn, dpA) + dot(contacts[i].JBn, dpB);
-        C[i * 2 + 1] = contacts[i].C0.y * (1 - alpha) + dot(contacts[i].JAt, dpA) + dot(contacts[i].JBt, dpB);
+        
+        // FIX: For circle-circle contacts, the tangential constraint should be zero
+        // since circles don't have a preferred tangential direction
+        if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_CIRCLE) {
+            C[i * 2 + 1] = 0.0f;  // No tangential constraint for circles
+        } else {
+            C[i * 2 + 1] = contacts[i].C0.y * (1 - alpha) + dot(contacts[i].JAt, dpA) + dot(contacts[i].JBt, dpB);
+        }
 
         // Update the friction bounds using the latest lambda values
         float frictionBound = abs(lambda[i * 2 + 0]) * friction;

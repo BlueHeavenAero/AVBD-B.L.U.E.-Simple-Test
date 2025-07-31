@@ -60,6 +60,7 @@ struct Rigid
     float friction;
     float radius;  // Bounding radius for broadphase
     ShapeType shapeType;
+    bool invisible; // For boundary walls that shouldn't be drawn
 
     // Constructor for boxes
     Rigid(Solver* solver, float2 size, float density, float friction, float3 position, float3 velocity = float3{ 0, 0, 0 });
@@ -155,6 +156,7 @@ struct IgnoreCollision : Force
     void draw() const override {}
 };
 
+
 // Collision manifold between two rigid bodies, which contains up to two frictional contact points
 struct Manifold : Force
 {
@@ -220,6 +222,14 @@ struct Solver
     float boundaryBottom;
     float boundaryRestitution; // Bounce factor (0 = no bounce, 1 = perfect bounce)
 
+    // Circle dropping system
+    bool circleDropEnabled;
+    float nextDropTime;
+    float currentTime;
+    bool dropSystemInitialized;
+    int circlesDropped;
+    int maxCirclesToDrop;
+
     Rigid* bodies;
     Force* forces;
 
@@ -229,6 +239,10 @@ struct Solver
     Rigid* pick(float2 at, float2& local);
     void clear();
     void defaultParams();
+    void createBoundaryWalls(); // Create static wall bodies for boundaries
+    void enableCircleDrop(bool enable); // Enable/disable circle dropping
+    void updateCircleDrop(); // Update circle dropping system
+    void resetCircleDrop(); // Reset circle dropping system (reset count, time, etc.)
     void step();
     void draw();
     void handleBoundaryCollisions(); // Handle collisions with screen boundaries
