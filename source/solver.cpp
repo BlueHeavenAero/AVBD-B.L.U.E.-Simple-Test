@@ -157,8 +157,12 @@ void Solver::updateCircleDrop()
         // Drop height: from the boundary top
         float dropHeight = boundaryTop;
         
-        // Create the circle with random position and rotation
-        float circleRadius = 1.0f;
+        // Random radius: variety between 0.5f and 1.5f for more interesting physics
+        float minRadius = 0.5f;
+        float maxRadius = 1.5f;
+        float circleRadius = minRadius + ((float)rand() / RAND_MAX) * (maxRadius - minRadius);
+        
+        // Create the circle with random position, rotation, and radius
         new Rigid(this, circleRadius, 1.0f, 0.5f, 
                   { randomX, dropHeight, randomRotation });
         
@@ -397,7 +401,8 @@ void Solver::step()
                 // TEMPORARY FIX: Apply angular damping to circles to prevent energy accumulation
                 // from numerical instabilities during sustained contact
                 if (body->shapeType == SHAPE_CIRCLE) {
-                    float angularDamping = 0.50f;  // User's preferred value
+                    float angularDamping = 0.99f;  // Very light damping now that we have proper friction
+                    // TODO: With proper friction system, this should be removable
                     body->velocity.z *= angularDamping;
                 }
             }

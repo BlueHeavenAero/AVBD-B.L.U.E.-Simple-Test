@@ -122,13 +122,9 @@ void Manifold::computeConstraint(float alpha)
         
         C[i * 2 + 0] = contacts[i].C0.x * (1 - alpha) + dot(contacts[i].JAn, dpA) + dot(contacts[i].JBn, dpB);
         
-        // FIX: For circle-circle contacts, the tangential constraint should be zero
-        // since circles don't have a preferred tangential direction
-        if (bodyA->shapeType == SHAPE_CIRCLE && bodyB->shapeType == SHAPE_CIRCLE) {
-            C[i * 2 + 1] = 0.0f;  // No tangential constraint for circles
-        } else {
-            C[i * 2 + 1] = contacts[i].C0.y * (1 - alpha) + dot(contacts[i].JAt, dpA) + dot(contacts[i].JBt, dpB);
-        }
+        // Use the existing tangential constraint system for all shapes (including circles)
+        // This provides physically accurate friction with proper friction coefficients
+        C[i * 2 + 1] = contacts[i].C0.y * (1 - alpha) + dot(contacts[i].JAt, dpA) + dot(contacts[i].JBt, dpB);
 
         // Update the friction bounds using the latest lambda values
         float frictionBound = abs(lambda[i * 2 + 0]) * friction;
