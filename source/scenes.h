@@ -278,6 +278,64 @@ static void sceneFracture(Solver* solver)
         new Rigid(solver, { 2, 1 }, 1.0f, 0.5f, { 0, i * 2.0f + 8.0f, 0 });
 }
 
+// Two "spaceships" comprised of rigidly welded blocks, no gravity, with
+// left/right/top/bottom bounds. Designed for dragging and crashing.
+static void sceneSpaceships(Solver* solver)
+{
+    solver->clear();
+
+    // Disable gravity for a space-like environment
+    solver->gravity = 0.0f;
+    solver->enableCircleDrop(false);
+
+    // Create invisible boundary walls on all sides
+    solver->createBoundaryWalls();
+
+    // Common block size and convenience lambdas for joints
+    const float2 unit = { 1, 1 };
+    auto make_block = [&](float x, float y) {
+        return new Rigid(solver, unit, 1.0f, 0.5f, float3{ x, y, 0.0f });
+    };
+    auto weld_h = [&](Rigid* A, Rigid* B) {
+        new Joint(solver, A, B, float2{ 0.5f, 0.0f }, float2{ -0.5f, 0.0f }, float3{ INFINITY, INFINITY, INFINITY }, 0.0f, 500.0f);
+    };
+    auto weld_v = [&](Rigid* A, Rigid* B) {
+        new Joint(solver, A, B, float2{ 0.0f, 0.5f }, float2{ 0.0f, -0.5f }, float3{ INFINITY, INFINITY, INFINITY }, 0.0f, 500.0f);
+    };
+
+    // --- Spaceship A: Cross shape ---
+    // Centered to the left side
+    float cx = -8.0f, cy = 5.0f;
+    // Create the vertical arm (5 blocks)
+    Rigid* crossV[5];
+    for (int i = 0; i < 5; ++i)
+        crossV[i] = make_block(cx, cy + (i - 2) * 1.0f);
+    for (int i = 1; i < 5; ++i)
+        weld_v(crossV[i - 1], crossV[i]);
+    // Create the horizontal arm using the same center block as the vertical arm
+    // Center block is crossV[2]; only create left and right blocks
+    Rigid* crossLeft  = make_block(cx - 1.0f, cy);
+    Rigid* crossRight = make_block(cx + 1.0f, cy);
+    // Weld to the shared center block to form a true cross with a single center
+    weld_h(crossLeft,  crossV[2]);
+    weld_h(crossV[2],  crossRight);
+
+    // --- Spaceship B: 5x5 grid ---
+    float gx0 = 8.0f, gy0 = 5.0f;
+    const int GW = 5, GH = 5;
+    Rigid* grid[GW][GH];
+    for (int x = 0; x < GW; ++x)
+        for (int y = 0; y < GH; ++y)
+            grid[x][y] = make_block(gx0 + (x - (GW - 1) * 0.5f), gy0 + (y - (GH - 1) * 0.5f));
+
+    for (int x = 0; x < GW; ++x)
+        for (int y = 1; y < GH; ++y)
+            weld_v(grid[x][y - 1], grid[x][y]);
+    for (int x = 1; x < GW; ++x)
+        for (int y = 0; y < GH; ++y)
+            weld_h(grid[x - 1][y], grid[x][y]);
+}
+
 static void sceneCards(Solver* solver)
 {
     solver->clear();
@@ -338,7 +396,8 @@ static void (*scenes[])(Solver*) =
     sceneJointGrid,
     sceneNet,
     sceneMotor,
-    sceneFracture
+    sceneFracture,
+    sceneSpaceships
 };
 
 static const char* sceneNames[] = {
@@ -360,7 +419,8 @@ static const char* sceneNames[] = {
     "Joint Grid",
     "Net",
     "Motor",
-    "Fracture"
+    "Fracture",
+    "Spaceships"
 };
 
-static const int sceneCount = 19;
+static const int sceneCount = 20;
