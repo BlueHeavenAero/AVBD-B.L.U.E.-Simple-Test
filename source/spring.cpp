@@ -76,7 +76,7 @@ void Spring::draw() const
     float2 v0 = transform(bodyA->position, rA);
     float2 v1 = transform(bodyB->position, rB);
 
-    glColor3f(0.75f, 0.0f, 0.0f);
+    glColor3f(1.0f, 1.0f, 1.0f);
     glBegin(GL_LINES);
     glVertex2f(v0.x, v0.y);
     glVertex2f(v1.x, v1.y);

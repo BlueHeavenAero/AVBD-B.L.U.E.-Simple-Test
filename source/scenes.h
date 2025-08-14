@@ -291,49 +291,128 @@ static void sceneSpaceships(Solver* solver)
     // Create invisible boundary walls on all sides
     solver->createBoundaryWalls();
 
-    // Common block size and convenience lambdas for joints
-    const float2 unit = { 1, 1 };
+    // Common block size (5x smaller) and helpers
+    const float2 unit = { 0.2f, 0.2f };
+    const float s = unit.x; // spacing/grid size
+
     auto make_block = [&](float x, float y) {
         return new Rigid(solver, unit, 1.0f, 0.5f, float3{ x, y, 0.0f });
     };
     auto weld_h = [&](Rigid* A, Rigid* B) {
-        new Joint(solver, A, B, float2{ 0.5f, 0.0f }, float2{ -0.5f, 0.0f }, float3{ INFINITY, INFINITY, INFINITY }, 0.0f, 500.0f);
+        if (!A || !B || A == B) return;
+        float hx = unit.x * 0.5f;
+        new Joint(solver, A, B, float2{ hx, 0.0f }, float2{ -hx, 0.0f }, float3{ INFINITY, INFINITY, INFINITY }, 0.0f, 80.0f);
     };
     auto weld_v = [&](Rigid* A, Rigid* B) {
-        new Joint(solver, A, B, float2{ 0.0f, 0.5f }, float2{ 0.0f, -0.5f }, float3{ INFINITY, INFINITY, INFINITY }, 0.0f, 500.0f);
+        if (!A || !B || A == B) return;
+        float hy = unit.y * 0.5f;
+        new Joint(solver, A, B, float2{ 0.0f, hy }, float2{ 0.0f, -hy }, float3{ INFINITY, INFINITY, INFINITY }, 0.0f, 80.0f);
     };
 
-    // --- Spaceship A: Cross shape ---
-    // Centered to the left side
+    // --- Spaceship A: Cross with branching arms via occupancy grid (no duplicates) ---
     float cx = -8.0f, cy = 5.0f;
-    // Create the vertical arm (5 blocks)
-    Rigid* crossV[5];
-    for (int i = 0; i < 5; ++i)
-        crossV[i] = make_block(cx, cy + (i - 2) * 1.0f);
-    for (int i = 1; i < 5; ++i)
-        weld_v(crossV[i - 1], crossV[i]);
-    // Create the horizontal arm using the same center block as the vertical arm
-    // Center block is crossV[2]; only create left and right blocks
-    Rigid* crossLeft  = make_block(cx - 1.0f, cy);
-    Rigid* crossRight = make_block(cx + 1.0f, cy);
-    // Weld to the shared center block to form a true cross with a single center
-    weld_h(crossLeft,  crossV[2]);
-    weld_h(crossV[2],  crossRight);
+    const int mainLen = 25;         // vertical length (5x more)
+    const int branchEvery = 5;      // branch rows spacing
+    const int maxBranchLen = 8;     // max length per side in blocks
 
-    // --- Spaceship B: 5x5 grid ---
+    const int NX = 1 + maxBranchLen * 2;  // columns (left..right)
+    const int NY = mainLen;               // rows (bottom..top)
+    const int cxIdx = maxBranchLen;       // center column
+    const int cyIdx = (NY - 1) / 2;       // center row
+
+    bool occ[NX][NY];
+    for (int x = 0; x < NX; ++x)
+        for (int y = 0; y < NY; ++y)
+            occ[x][y] = false;
+
+    // Main vertical arm
+    for (int y = 0; y < NY; ++y)
+        occ[cxIdx][y] = true;
+
+    // Randomized branches left/right at selected rows
+    for (int y = 0; y < NY; ++y)
+    {
+        if ((y - cyIdx) % branchEvery == 0 && y != 0 && y != NY - 1)
+        {
+            int len = 3 + (rand() % (maxBranchLen - 2)); // [3, maxBranchLen]
+            for (int j = 1; j <= len; ++j)
+            {
+                occ[cxIdx - j][y] = true;
+                occ[cxIdx + j][y] = true;
+            }
+        }
+    }
+
+    // Instantiate once and weld neighbors
+    Rigid* crossBlocks[NX][NY];
+    for (int x = 0; x < NX; ++x)
+        for (int y = 0; y < NY; ++y)
+            crossBlocks[x][y] = occ[x][y] ? make_block(cx + (x - cxIdx) * s, cy + (y - cyIdx) * s) : (Rigid*)0;
+
+    for (int x = 0; x < NX; ++x)
+    {
+        for (int y = 0; y < NY; ++y)
+        {
+            if (!crossBlocks[x][y]) continue;
+            if (y + 1 < NY && crossBlocks[x][y + 1]) weld_v(crossBlocks[x][y], crossBlocks[x][y + 1]);
+            if (x + 1 < NX && crossBlocks[x + 1][y]) weld_h(crossBlocks[x][y], crossBlocks[x + 1][y]);
+        }
+    }
+
+    // Give the cross a rightward initial velocity
+    const float vx_cross = 8.0f; // units/sec
+    for (int x = 0; x < NX; ++x)
+        for (int y = 0; y < NY; ++y)
+            if (crossBlocks[x][y])
+                crossBlocks[x][y]->velocity = float3{ vx_cross, 0.0f, 0.0f };
+
+    // --- Spaceship B: Hollow ring approximated by a square grid ---
     float gx0 = 8.0f, gy0 = 5.0f;
-    const int GW = 5, GH = 5;
+    const int GW = 25, GH = 25;    // 5x more than original 5x5
     Rigid* grid[GW][GH];
-    for (int x = 0; x < GW; ++x)
-        for (int y = 0; y < GH; ++y)
-            grid[x][y] = make_block(gx0 + (x - (GW - 1) * 0.5f), gy0 + (y - (GH - 1) * 0.5f));
+    bool present[GW][GH];
+
+    float halfW = (GW - 1) * 0.5f * s;
+    float halfH = (GH - 1) * 0.5f * s;
+    float outerR = min(halfW, halfH);
+    float innerR = outerR - 2.0f * s; // thin ring
 
     for (int x = 0; x < GW; ++x)
-        for (int y = 1; y < GH; ++y)
-            weld_v(grid[x][y - 1], grid[x][y]);
-    for (int x = 1; x < GW; ++x)
+    {
         for (int y = 0; y < GH; ++y)
-            weld_h(grid[x - 1][y], grid[x][y]);
+        {
+            float dx = (x - (GW - 1) * 0.5f) * s;
+            float dy = (y - (GH - 1) * 0.5f) * s;
+            float r = sqrtf(dx * dx + dy * dy);
+            bool keep = (r >= innerR && r <= outerR);
+            present[x][y] = keep;
+            grid[x][y] = keep ? make_block(gx0 + dx, gy0 + dy) : (Rigid*)0;
+        }
+    }
+
+    for (int x = 0; x < GW; ++x)
+    {
+        for (int y = 0; y < GH; ++y)
+        {
+            if (!present[x][y]) continue;
+            if (y + 1 < GH && present[x][y + 1]) weld_v(grid[x][y], grid[x][y + 1]);
+            if (x + 1 < GW && present[x + 1][y]) weld_h(grid[x][y], grid[x + 1][y]);
+        }
+    }
+
+    // Give the ring an initial angular motion about its center (gx0, gy0)
+    const float omega_ring = 1.0f; // radians/sec (counter-clockwise)
+    for (int x = 0; x < GW; ++x)
+    {
+        for (int y = 0; y < GH; ++y)
+        {
+            if (!present[x][y]) continue;
+            float2 p = grid[x][y]->position.xy();
+            float2 r = float2{ p.x - gx0, p.y - gy0 };
+            float2 v = float2{ -omega_ring * r.y, omega_ring * r.x };
+            grid[x][y]->velocity = float3{ v.x, v.y, 0.0f };
+        }
+    }
 }
 
 static void sceneCards(Solver* solver)

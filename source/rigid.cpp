@@ -82,7 +82,7 @@ void Rigid::draw()
         float2 v2 = R * float2{ size.x * 0.5f, size.y * 0.5f } + position.xy();
         float2 v3 = R * float2{ -size.x * 0.5f, size.y * 0.5f } + position.xy();
 
-        glColor3f(0.6f, 0.6f, 0.6f);
+        glColor3f(0.3f, 0.3f, 0.3f);
         glBegin(GL_QUADS);
         glVertex2f(v0.x, v0.y);
         glVertex2f(v1.x, v1.y);
@@ -90,7 +90,7 @@ void Rigid::draw()
         glVertex2f(v3.x, v3.y);
         glEnd();
 
-        glColor3f(0, 0, 0);
+        glColor3f(1, 1, 1);
         glBegin(GL_LINE_LOOP);
         glVertex2f(v0.x, v0.y);
         glVertex2f(v1.x, v1.y);
@@ -105,7 +105,7 @@ void Rigid::draw()
         float r = size.x; // Circle radius stored in size.x
         
         // Fill
-        glColor3f(0.6f, 0.6f, 0.6f);
+        glColor3f(0.3f, 0.3f, 0.3f);
         glBegin(GL_TRIANGLE_FAN);
         glVertex2f(center.x, center.y); // Center point
         for (int i = 0; i <= 32; i++)
@@ -116,7 +116,7 @@ void Rigid::draw()
         glEnd();
 
         // Outline
-        glColor3f(0, 0, 0);
+        glColor3f(1, 1, 1);
         glBegin(GL_LINE_LOOP);
         for (int i = 0; i < 32; i++)
         {
@@ -127,7 +127,7 @@ void Rigid::draw()
 
         // Draw radius line to show rotation
         float angle = position.z;
-        glColor3f(0, 0, 0);
+        glColor3f(1, 1, 1);
         glBegin(GL_LINES);
         glVertex2f(center.x, center.y);
         glVertex2f(center.x + cosf(angle) * r, center.y + sinf(angle) * r);

@@ -317,7 +317,7 @@ void mainLoop()
     glLineWidth(2.0f);
     glPointSize(3.0f);
     glViewport(0, 0, w, h);
-    glClearColor(1, 1, 1, 1); 
+    glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
